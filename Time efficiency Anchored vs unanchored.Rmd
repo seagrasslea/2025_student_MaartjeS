@@ -1,0 +1,271 @@
+---
+title: "Time_Analysis"
+output: html_document
+date: "2025-07-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+install.packages("lme4")
+library(lme4)
+install.packages("dplyr")
+library(dplyr)
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("readxl")
+library(readxl)
+install.packages("lubridate")
+library(lubridate)
+install.packages("hms")
+library(hms)
+install.packages("stringr")
+library(stringr)
+install.packages("ggplot2")
+library(ggplot2)
+install.packages("emmeans")
+library(emmeans)
+```
+
+# Load Data
+
+```{r}
+# Adjust this path to your file location
+data <- read_excel("2025_GuerillaPlus_Time.xlsx")
+excel_sheets("2025_GuerillaPlus_Time.xlsx")
+plant_data <- read_excel("2025_GuerillaPlus_Time.xlsx", sheet = "Planting_guerilla")
+
+# if this does not work, just import it via the files tab, right lower corner.
+
+data <- X2025_GuerillaPlus_Time
+plant_data <- X2025_GuerillaPlus_Time
+```
+
+# Prepare Data frame for analysis
+
+Data looks like 08:24:00, even though its meant like 8 minutes and 42 seconds, so we first need to extract the minutes and seconds, then transfer it to 'total minutes'.
+
+```{r}
+unique(data$total_time)
+
+# Tijd als string extraheren
+time_str <- format(data$total_time, format = "%H:%M:%S")
+
+# Splits op ":"
+time_parts <- strsplit(time_str, ":")
+
+# Corrigeer interpretatie: uren zijn minuten, minuten zijn seconden
+data$total_minutes <- sapply(time_parts, function(x) {
+  minutes <- as.numeric(x[1])   # stond eerst als 'hours'
+  seconds <- as.numeric(x[2])   # stond eerst als 'minutes'
+  total <- minutes + seconds / 60
+  return(total)
+})
+```
+
+Now, we calculate the total amount of seconds.
+
+```{r}
+# Haal de tijd eruit als HH:MM:SS
+time_str <- format(data$total_time, format = "%H:%M:%S")
+
+# Split op ":"
+time_parts <- strsplit(time_str, ":")
+
+# Corrigeer interpretatie: HH = minuten, MM = seconden
+data$total_seconds <- sapply(time_parts, function(x) {
+  minutes <- as.numeric(x[1])   # stond als 'uren'
+  seconds <- as.numeric(x[2])   # stond als 'minuten'
+  total <- minutes * 60 + seconds
+  return(total)
+})
+
+```
+
+Next, we want to know how long it takes to prepare **1 TPU**, and **96 TPU's** (the amount for 1 plot).
+
+```{r}
+# time needed for 1 TPU
+data$minutes_per_TPU <- data$total_minutes / data$amount_tpus
+data$seconds_per_TPU <- data$total_seconds / data$amount_tpus
+
+# time needed for 96 TPUs
+data$minutes_per_96_TPU <- data$minutes_per_TPU * 96
+data$seconds_per_96_TPU <- data$seconds_per_TPU * 96
+
+```
+
+# Now we do the same for the 'planting' time.
+
+```{r}
+# check values
+
+head(plant_data$time)
+
+# transform into minutes and seconds
+
+plant_data <- plant_data %>%
+  mutate(
+    total_seconds = hour(time) * 3600 + minute(time) * 60 + second(time),
+    total_minutes = total_seconds / 60
+  )
+```
+
+We also add experience to our data set. Lea, Stijn and Jim are experienced, Maartje and Alice are not. 1 is experienced, 0 is not experienced.
+
+```{r}
+plant_data$experience <- ifelse(plant_data$planter %in% c("Stijn", "Jim", "Lea"), 1, 0)
+```
+
+#account for the difference between the different preparation steps. Sorting is for both anchored and unanchored, anchored is only for anchored.
+
+```{r}
+# Load prep data
+prep_data <- data
+
+prep_data <- prep_data %>%
+  mutate(
+    task_type = method,  # Save whether it's 'sorting' or 'anchored'
+    method = ifelse(method == "sorting", NA, method)  # Keep NA for now
+  )
+
+# Separate sorting
+sorting_rows <- prep_data %>% filter(task_type == "sorting")
+
+# Duplicate sorting rows for both methods
+sorting_for_both <- bind_rows(
+  sorting_rows %>% mutate(method = "anchored"),
+  sorting_rows %>% mutate(method = "unanchored")
+)
+
+# Add back non-sorting prep rows
+non_sorting <- prep_data %>% filter(task_type != "sorting")
+
+# Combine all
+prep_cleaned <- bind_rows(non_sorting, sorting_for_both) %>%
+  mutate(stage = "preparation")
+
+```
+
+# Analysis with average time per method
+
+Average the planting time per location, whcih shows a general difference in time-investment between anchored vs. unanchored.
+
+-   Calculate average preparation time per method and add this to a new dataframe: prep_sumamry
+
+```{r}
+prep_summary <- prep_cleaned %>%
+  group_by(method) %>%
+  summarise(avg_prep = mean(minutes_per_96_TPU, na.rm = TRUE))
+
+```
+
+-   Calculate average planting time per location and method
+
+```{r}
+plant_summary <- plant_data %>%
+  group_by(method, location) %>%
+  summarise(avg_plant = mean(total_minutes))
+```
+
+-   Add preparation in our data frame plant_combined
+
+```{r}
+plant_combined <- plant_data %>%
+  left_join(prep_summary, by = "method")
+
+```
+
+Then, we want to add both planting time (total_minutes) to preparation time (av_prep) total_minutes + avg_prep = Total_time_per_plot
+
+```{r}
+
+plant_combined <- plant_combined %>%
+  mutate(total_time_per_plot = total_minutes + avg_prep)
+
+```
+
+-   Run the model
+
+```{r}
+model1 <- lmer(total_time_per_plot ~ method + (1 | location), data = plant_combined)
+summary(model1)
+
+```
+
+First run first output:
+
+REML criterion at convergence: 140.9
+
+Scaled residuals: Min 1Q Median 3Q Max -1.12698 -0.74917 -0.04525 0.60518 2.50850
+
+Random effects: Groups Name Variance Std.Dev. location (Intercept) 26.71 5.168\
+Residual 160.57 12.672\
+Number of obs: 19, groups: location, 5
+
+Fixed effects: Estimate Std. Error t value (Intercept) 71.477 5.132 13.929 methodunanchored -32.633 6.059 -5.386
+
+Correlation of Fixed Effects: (Intr) methdnnchrd -0.687
+
+"A GLMM revealed that unanchored transplantation significantly reduced total time per plot compared to anchored methods (estimate = -32.6 minutes, t = -5.39)."
+
+# Visualize this:
+
+```{r}
+# Create a data frame with the estimates
+plot_data <- data.frame(
+  method = c("Anchored", "Unanchored"),
+  mean_time = c(71.477, 71.477 - 32.633),
+  se = c(5.132, 6.059)
+)
+
+# Create the bar plot with error bars
+ggplot(plot_data, aes(x = method, y = mean_time, fill = method)) +
+  geom_bar(stat = "identity", width = 0.6, color = "black") +
+  geom_errorbar(aes(ymin = mean_time - se, ymax = mean_time + se), width = 0.2) +
+  labs(
+    title = "Time to Prepare and Plant 96 TPUs",
+    x = "Method",
+    y = "Total Time (minutes)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+# Analysis with experience variation
+
+```{r}
+model2 <- lmer(total_time_per_plot ~ method * experience + (1 | location), data = plant_combined)
+summary(model2)
+
+```
+Now we'll visualize this :)
+
+```{r}
+# Get estimated marginal means for all combinations
+emm <- emmeans(model2, ~ method * experience)
+
+# Convert to a data frame for plotting
+plot_data <- as.data.frame(emm)
+
+# Rename experience for nicer labels
+plot_data$experience <- factor(plot_data$experience, labels = c("No experience", "Experienced"))
+
+# Plot
+ggplot(plot_data, aes(x = method, y = emmean, fill = experience)) +
+  geom_bar(stat = "identity", position = position_dodge(0.7), width = 0.6, color = "black") +
+  geom_errorbar(aes(ymin = emmean - SE, ymax = emmean + SE), 
+                position = position_dodge(0.7), width = 0.2) +
+  labs(
+    title = "Total Time per Method and Experience Level",
+    x = "Method",
+    y = "Estimated Total Time (minutes)",
+    fill = "Experience"
+  ) +
+  theme_minimal()
+```
