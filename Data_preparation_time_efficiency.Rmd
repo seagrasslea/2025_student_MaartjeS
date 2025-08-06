@@ -1,0 +1,214 @@
+---
+title: "Time_Analysis"
+output: html_document
+date: "2025-07-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# install packages! only once per computer. 
+
+```{r setup, message=FALSE, warning=FALSE}
+install.packages("lme4")
+install.packages("dplyr")
+install.packages("tidyverse")
+install.packages("readxl")
+install.packages("lubridate")
+install.packages("hms")
+install.packages("stringr")
+install.packages("ggplot2")
+install.packages("emmeans")
+install.packages("writexl")  
+
+```
+
+Load the libraries, every time. 
+````{r}
+library(lme4)
+library(dplyr)
+library(tidyverse)  
+library(readxl)
+library(lubridate)
+library(hms)
+library(stringr)
+library(ggplot2)
+library(emmeans)
+library(writexl)
+
+````
+
+
+# Load Data
+
+```{r}
+# Adjust this path to your file location
+data <- read_excel("GuerillaPlus_Time.xlsx")
+excel_sheets("GuerillaPlus_Time.xlsx")
+plant_data <- read_excel("GuerillaPlus_Time.xlsx", sheet = "Planting_guerilla")
+
+# if this does not work, just import it via the files tab, right lower corner.
+
+```
+
+# Prepare Data frame for analysis
+
+Data looks like 08:24:00, even though its meant like 8 minutes and 42 seconds, so we first need to extract the minutes and seconds, then transfer it to 'total minutes'.
+
+```{r}
+unique(data$total_time)
+
+# Tijd als string extraheren
+time_str <- format(data$total_time, format = "%H:%M:%S")
+
+# Splits op ":"
+time_parts <- strsplit(time_str, ":")
+
+# Corrigeer interpretatie: uren zijn minuten, minuten zijn seconden
+data$total_minutes <- sapply(time_parts, function(x) {
+  minutes <- as.numeric(x[1])   # stond eerst als 'hours'
+  seconds <- as.numeric(x[2])   # stond eerst als 'minutes'
+  total <- minutes + seconds / 60
+  return(total)
+})
+```
+
+Now, we calculate the total amount of seconds.
+
+```{r}
+# Haal de tijd eruit als HH:MM:SS
+time_str <- format(data$total_time, format = "%H:%M:%S")
+
+# Split op ":"
+time_parts <- strsplit(time_str, ":")
+
+# Corrigeer interpretatie: HH = minuten, MM = seconden
+data$total_seconds <- sapply(time_parts, function(x) {
+  minutes <- as.numeric(x[1])   # stond als 'uren'
+  seconds <- as.numeric(x[2])   # stond als 'minuten'
+  total <- minutes * 60 + seconds
+  return(total)
+})
+
+```
+
+Next, we want to know how long it takes to prepare **1 TPU**, and **96 TPU's** (the amount for 1 plot).
+
+```{r}
+# time needed for 1 TPU
+data$minutes_per_TPU <- data$total_minutes / data$amount_tpus
+data$seconds_per_TPU <- data$total_seconds / data$amount_tpus
+
+# time needed for 96 TPUs
+data$minutes_per_96_TPU <- data$minutes_per_TPU * 96
+data$seconds_per_96_TPU <- data$seconds_per_TPU * 96
+
+```
+
+# Now we do the same for the 'planting' time.
+
+```{r}
+# check values
+
+head(plant_data$time)
+
+# transform into minutes and seconds
+
+plant_data <- plant_data %>%
+  mutate(
+    total_seconds = hour(time) * 3600 + minute(time) * 60 + second(time),
+    total_minutes = total_seconds / 60
+  )
+```
+
+We also add experience to our data set. Lea, Stijn and Jim are experienced, Maartje and Alice are not. 1 is experienced, 0 is not experienced.
+
+```{r}
+plant_data$experience <- ifelse(plant_data$planter %in% c("Stijn", "Jim", "Lea"), 1, 0)
+```
+
+# There are also a few outliers. One from Alice (75 mintutes). I will delete this one since it was her first planting time. Other big numbers, 43 and 45 I will keep in my results, since it was done by both an experienced and unexperienced 
+
+```{r}
+
+# rename the data frame so we know it has no outliers. 
+
+plant_data_no_outlier <- plant_data[-4, ]
+
+```
+#account for the difference between the different preparation steps. Sorting is for both anchored and unanchored, anchored is only for anchored.
+
+```{r}
+# Load prep data
+prep_data <- data
+
+prep_data <- prep_data %>%
+  mutate(
+    task_type = method,  # Save whether it's 'sorting' or 'anchored'
+    method = ifelse(method == "sorting", NA, method)  # Keep NA for now
+  )
+
+# Separate sorting
+sorting_rows <- prep_data %>% filter(task_type == "sorting")
+
+# Duplicate sorting rows for both methods
+sorting_for_both <- bind_rows(
+  sorting_rows %>% mutate(method = "anchored"),
+  sorting_rows %>% mutate(method = "unanchored")
+)
+
+# Add back non-sorting prep rows
+non_sorting <- prep_data %>% filter(task_type != "sorting")
+
+# Combine all
+prep_cleaned <- bind_rows(non_sorting, sorting_for_both) %>%
+  mutate(stage = "preparation")
+
+```
+
+Average the planting time per location, whcih shows a general difference in time-investment between anchored vs. unanchored.
+
+-   Calculate average preparation time per method and add this to a new dataframe: prep_sumamry
+
+```{r}
+prep_summary <- prep_cleaned %>%
+  group_by(method) %>%
+  summarise(avg_prep = mean(minutes_per_96_TPU, na.rm = TRUE))
+
+```
+
+-   Calculate average planting time per location and method
+
+```{r}
+plant_summary <- plant_data_no_outlier %>%
+  group_by(method, location) %>%
+  summarise(avg_plant = mean(total_minutes))
+```
+
+-   Add preparation in our data frame plant_combined
+
+```{r}
+plant_combined <- plant_data_no_outlier %>%
+  left_join(prep_summary, by = "method")
+
+```
+
+Then, we want to add both planting time (total_minutes) to preparation time (av_prep) total_minutes + avg_prep = Total_time_per_plot
+
+```{r}
+
+plant_combined <- plant_combined %>%
+  mutate(total_time_per_plot = total_minutes + avg_prep)
+
+```
+
+Now we have our 'workable' data sheets. Let's save them so we can work with them in our analysis.
+
+```{r}
+
+
+write_xlsx(plant_combined, "Time.xlsx")
+
+```
+

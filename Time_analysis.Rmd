@@ -1,0 +1,147 @@
+---
+title: "Analysis 1"
+author: "M.C. Schinkel"
+date: "2025-08-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("DHARMa")
+
+library(DHARMa)
+```
+
+Upload our prepared data sheet, "Time"
+
+```{r}
+# Adjust this path to your file location
+
+Time1 <- read_excel("Time.xlsx")
+
+```
+
+Check assumptions
+
+Not normally distributed, since it's time data. Therefore we will use a GLMM.
+
+Run GLMM
+
+```{r}
+
+## run the model
+
+model1 <- glmer(total_time_per_plot ~ method + (1|location), family = Gamma(link="log"), data=Time1)
+
+## check for overdispersion
+
+residual_deviance <- deviance(model1)
+df_residual <- df.residual(model1)
+overdispersion <- residual_deviance / df_residual
+overdispersion # overdispersion is 0.05 --> not overdispersed! Good.
+
+## Residuals vs. fitted Plot
+
+plot(fitted(model1), residuals(model1, type="pearson"),
+     xlab="Fitted values", ylab="Pearson residuals",
+     main="Residuals vs Fitted")
+abline(h=0, col="red")
+
+# random scatter, no pattern: points seem randomly scattered at the high and low fitted values. 
+# residuals are in a range of -0.2 and 0.4, which is a small range
+# Two clusters, but those are probably the two methods.
+# model fits the data well!!
+
+#DHARMa
+
+simulationOutput <- simulateResiduals(fittedModel = model1, n = 1000)
+plot(simulationOutput)
+
+# “DHARMa residual diagnostics indicated a good model fit (KS test p = 0.97, dispersion test p = 0.29, outlier test p = 1). No overdispersion, outliers, or significant deviations from model assumptions were detected. Warnings about quantile regressions reflect the small sample size, not issues with model fit.”
+
+summary(model1)
+```
+
+Now we'll visualize this :)
+
+```{r}
+
+# Define seagrass colors
+seagrass_colours <- c("Anchored" = "#78866B",    # olive/brownish green
+                      "Unanchored" = "#207A3C")  # seagrass/dark green
+
+# Summarize means and SEs per method
+plot_data <- Time1 %>%
+  group_by(method) %>%
+  summarise(
+    mean_time = mean(total_time_per_plot, na.rm = TRUE),
+    se = sd(total_time_per_plot, na.rm = TRUE) / sqrt(n())
+  )
+print(plot_data)
+
+# visualize it
+seagrass_colours <- c("anchored" = "#78866B", "unanchored" = "#207A3C")
+
+ggplot(plot_data, aes(x = method, y = mean_time, fill = method)) +
+  geom_bar(stat = "identity", color = "black", width = 0.6) +
+  geom_errorbar(aes(ymin = mean_time - se, ymax = mean_time + se), width = 0.2) +
+  scale_fill_manual(values = seagrass_colours) +
+  labs(
+    x = "Transplantation Method",
+    y = "Mean Planting Time per Plot (minutes)",
+    title = "Effect of Transplantation Method on Planting Time"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+```
+
+Now analyze whether experience has an effect on the unanchored method
+
+```{r}
+
+# first make a new dataframe with only unanchored method
+
+unanchored_time1 <- Time1 %>% filter(method == "unanchored")
+
+model_exp <- glmer(total_time_per_plot ~ experience + (1|planter), family = Gamma(link = "log"), data = unanchored_time1)
+
+## check for overdispersion
+
+residual_deviance2 <- deviance(model_exp)
+df_residual2 <- df.residual(model_exp)
+overdispersion2 <- residual_deviance / df_residual
+overdispersion2 # overdispersion is 0.05 --> not overdispersed! Good.
+
+## Residuals vs. fitted Plot
+
+plot(fitted(model_exp), residuals(model_exp, type="pearson"),
+     xlab="Fitted values", ylab="Pearson residuals",
+     main="Residuals vs Fitted")
+abline(h=0, col="red")
+
+# random scatter, no pattern: points seem randomly scattered at the high and low fitted values. 
+# residuals are in a range of -0.2 and 0.4, which is a small range
+# Two clusters, but those are probably the two methods.
+# model fits the data well!!
+
+#DHARMa
+
+simulationOutput2 <- simulateResiduals(fittedModel = model_exp, n = 1000)
+plot(simulationOutput2)
+
+# all okay
+
+summary(model_exp)
+```
+
+A generalized linear mixed model (Gamma, log link) was fitted to evaluate the effect of experience (experienced vs. inexperienced) on planting time for the unanchored method. There was no statistically significant effect of experience (estimate = –0.23 on log scale, SE = 0.18, p = 0.21). Mean estimated planting times were 46.5 minutes for inexperienced and 37.0 minutes for experienced planters, a non-significant reduction of about 9.5 minutes. Model diagnostics showed no issues with overdispersion or fit.
+
+However, the sample size was very small (n = 2 unexperienced, n = 9 experienced)
