@@ -1,0 +1,122 @@
+---
+title: "statistical analysis count data"
+author: "M.C. Schinkel"
+date: "2025-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+###### Hello Lea,
+## Welcome to my R code.
+## I will send you the data file that I use to do the analysis as well.
+
+## brb crying
+
+## load new package
+library(glmmTMB)
+```
+
+##load in the data!
+```{r}
+Guerilla25_clean <- read_excel("Guerilla25_clean.xlsx")
+
+```
+
+```{r}
+#########################################33 Use a gamma model with a log link. 
+
+## Zero inflation doesnt work, so let's add 0.00001 at 0's...
+
+Guerilla25_clean <- Guerilla25_clean %>%
+  mutate(total_shootsrelative = ifelse(total_shootsrelative == 0.00000, 0.00001, total_shootsrelative))
+
+## save data sheet so I can start visualizing it in another R-script. 
+getwd()
+write_xlsx(Guerilla25_clean, "Guerilla25_clean.xlsx")
+
+## Now run the model
+
+model2 <- glmmTMB(
+  total_shootsrelative ~ method * location + offset(log(T0total_shoots)) + (1 | plot),
+  family = Gamma(link = "log"),
+  ziformula = ~ location,
+  data = Guerilla25_clean %>% filter(monitoring == "T2")  # just T2 is fine here
+)
+## check for overdispersion
+
+residual_deviance2 <- deviance(model2)
+df_residual2 <- df.residual(model2)
+overdispersion2 <- residual_deviance2 / df_residual2
+overdispersion2 # overdispersion is 6.xxxxx
+
+### try gamma again
+model_gamma <- glmmTMB(
+  total_shootsrelative ~ method * location + offset(log(T0total_shoots)) + (1 | plot),
+  family = Gamma(link = "log"),
+  data = Guerilla25_clean %>% 
+           filter(monitoring == "T2") %>%
+           mutate(total_shootsrelative = ifelse(total_shootsrelative == 0, 0.0001, total_shootsrelative))
+)
+
+res_dev <- deviance(model_gamma)
+df_res <- df.residual(model_gamma)
+overdispersion <- res_dev / df_res
+overdispersion ##### overdispersion is 9.xxxxxx
+
+##########################################################3333
+## Ok let's try soemthing else, let's add different levels of variability per location.
+
+model2b <- glmmTMB(
+  total_shootsrelative ~ method * location + offset(log(T0total_shoots)) + (1 | plot),
+  family = Gamma(link = "log"),
+  #ziformula = ~ location,
+  dispformula = ~ location, 
+  data = Guerilla25_clean %>% filter(monitoring == "T2")  # just T2 is fine here
+)
+
+residual_deviance2b <- deviance(model2b)
+df_residual2b <- df.residual(model2b)
+overdispersion2b <- residual_deviance2b / df_residual2b
+overdispersion2b ## still overdispersed, 9.xxxxxxxxxx
+
+######################################################333
+### Let's try a tweedie
+
+library(glmmTMB)
+
+model_tweedie <- glmmTMB(
+  total_shootsrelative ~ method * location + offset(log(T0total_shoots)) + (1 | plot),
+  family = tweedie(link = "log"),
+  ziformula = ~1,  # Optional zero-inflation
+  data = Guerilla25_clean %>% filter(monitoring == "T2")
+)
+
+
+res_dev <- deviance(model_tweedie)
+df_res <- df.residual(model_tweedie)
+overdispersion <- res_dev / df_res
+overdispersion
+
+## Residuals vs. fitted Plot
+
+plot(fitted(model_tweedie), residuals(model_tweedie, type="pearson"),
+     xlab="Fitted values", ylab="Pearson residuals",
+     main="Residuals vs Fitted")
+abline(h=0, col="red")
+
+#DHARMa
+library(DHARMa)
+simulationOutput_tweedie <- simulateResiduals(fittedModel = model_tweedie, n = 1000)
+plot(simulationOutput_tweedie)
+
+#### 
+```
+
+```{r}
+
+
+```

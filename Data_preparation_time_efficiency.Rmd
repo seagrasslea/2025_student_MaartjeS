@@ -6,6 +6,7 @@ date: "2025-07-11"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 ```
 
 # install packages! only once per computer. 

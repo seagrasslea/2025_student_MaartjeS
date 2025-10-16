@@ -1,0 +1,192 @@
+---
+title: "Preparation for success analysis and visualization!!!!!!!"
+author: "M.C. Schinkel"
+date: "2025-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+````{r}
+library(lme4)
+library(dplyr)
+library(tidyverse)  
+library(readxl)
+library(lubridate)
+library(hms)
+library(stringr)
+library(ggplot2)
+library(emmeans)
+library(writexl)
+
+````
+ok here we go lololol
+first load in some data girl!!!
+
+```{r}
+# Adjust this path to your file location
+
+file_path <- "2025_GuerillaPlus_DATABASE.xlsx"
+
+# Only get sheets starting with 'Fact', but not facttreatment <3
+fact_sheets <- excel_sheets(file_path) %>%
+  grep("^Fact", ., value = TRUE) %>%
+  setdiff("FactTreatments")
+
+# Read and combine
+combined_data <- lapply(fact_sheets, function(sheet) {
+  read_excel(file_path, sheet = sheet) %>%
+    mutate(source_sheet = sheet)  # Optional: to keep track of origin
+}) %>% bind_rows()
+
+```
+
+Now we have our combined data ! let's remove all the stuff we don't want. 
+and do the mean and multiplication of the frames!
+
+
+```{r}
+## write down which I columns want to use! 
+## differentiate between percentage cover and count data, bc the percentage cover does not need to be multiplied by 4. 
+
+count_cols <- c("total_shoots", "lugworms")
+percent_cols <- c("epiphytes", "macroalgae")
+
+plot_level_data <- combined_data %>%
+  group_by(location, monitoring, method, plot) %>%
+  summarise(
+    across(all_of(count_cols), ~ mean(.x, na.rm = TRUE) * 4),
+    across(all_of(percent_cols), ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop"
+  )
+```
+
+now we have our workable data sheet. visualize it.
+
+```{r}
+
+shoots_over_time <- plot_level_data %>%
+  filter(!is.na(total_shoots)) %>%
+  group_by(method, monitoring) %>%
+  summarise(
+    mean_shoots = mean(total_shoots),
+    sd = sd(total_shoots),
+    n = n(),
+    se = sd / sqrt(n),
+    .groups = "drop"
+  )
+
+# Ensure correct timepoint order
+shoots_over_time$monitoring <- factor(shoots_over_time$monitoring, levels = c("T0", "T1", "T2"))
+
+# Plot
+ggplot(shoots_over_time, aes(x = monitoring, y = mean_shoots, group = method, color = method)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = mean_shoots - se, ymax = mean_shoots + se), width = 0.2) +
+  labs(
+    title = "Development of Shoot Count Over Time",
+    x = "Monitoring Timepoint",
+    y = "Mean Shoots per 1 m²",
+    color = "Method"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+
+
+```
+
+```{r}
+options(repr.plot.width = 12, repr.plot.height = 5)
+
+## let's do a graph where it shows the different locations.
+shoots_by_location$monitoring <- as.character(shoots_by_location$monitoring)
+shoots_by_location$monitoring <- factor(shoots_by_location$monitoring, levels = c("T0", "T1", "T2"))
+
+
+ggplot(shoots_by_location, aes(x = monitoring, y = mean_shoots, color = location, group = interaction(location, method))) +
+  geom_line(aes(linetype = linetype), linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~location) + ## remove this if you don't want the different panels, thanks <3
+  scale_x_discrete(drop = FALSE) +  # ensures even unused levels are shown
+  labs(
+    title = "Shoot Count Over Time per Location",
+    x = "Monitoring Timepoint",
+    y = "Mean Shoots per Plot (1 m²)",
+    color = "Location",
+    linetype = "Method"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12)
+  )
+
+
+ggsave("shoots_by_location.png", plot = last_plot(), width = 12, height = 5, dpi = 300)
+
+```
+save all the new dataframes on your computer so you can analyze further with it and you don;t have to create them over and over again. 
+
+```{r}
+write_xlsx(plot_level_data, "plot_level_data.xlsx")
+write_xlsx(combined_data, "combined_data.xlsx")
+```
+
+Okay weird weird, we need to use relative shoot count and see if that's better, because apparently the results CHANGE!!!
+so let's GOOOOOO
+
+```{r}
+## let's use this beautiful chucnk of code I got from lea and make it our own <3
+
+# ---- ANALYSIS: RELATIVE SHOOT DENSITY ----
+# ---- Summarize frame counts per subplot ---
+
+## FIRST change the numbers from SVF to the right ones. Now the new plot numbers are there.
+new_plots <- rep(1:10, each = 4)
+
+# Find the exact rows you want to update
+rows_to_update <- which(combined_data$location == "SlikkenvanFlakkee" & combined_data$monitoring == "T2")
+
+# Check the length
+length(rows_to_update)  # should be 40
+
+# Then replace the plot values for those rows
+combined_data$plot[rows_to_update] <- new_plots
+
+##### Now we have the workable data sheet combined_data, use this for the relative shoot stuff. 
+
+Guerilla25 <- combined_data
+Guerilla25 <- Guerilla25 %>% dplyr::group_by(location, monitoring, method, plot)
+
+#####################################################
+
+# Calculate T0 means per plot
+Guerilla25T0 <- Guerilla25 %>%
+  filter(monitoring == "T0") %>%
+  group_by(location, method, plot) %>%
+  summarise(T0total_shoots = mean(total_shoots), .groups = "drop")
+
+# Join T0 means with the main dataset and calculate relative shoot density
+Guerilla25 <- Guerilla25 %>%
+  left_join(Guerilla25T0, by = c("location", "method", "plot")) %>%
+  mutate(
+    total_shootsrelative = ifelse(
+      monitoring == "T0", 100,
+      total_shoots / T0total_shoots * 100
+    )
+  )
+
+table(Guerilla25$monitoring, is.na(Guerilla25$total_shootsrelative))
+
+## remove the NAs of plot 39. we forgot to monitor it lol
+Guerilla25_clean <- Guerilla25 %>% filter(!is.na(total_shootsrelative))
+
+## save data sheet to immediately start working with it for your analysis!
+write_xlsx(Guerilla25, "Guerilla25_relativeshoots.xlsx")
+```
+
+Now you go and analyse that stuff!!!!!!!!!
