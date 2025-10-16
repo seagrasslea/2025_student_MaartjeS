@@ -35,7 +35,7 @@ Run GLMM
 
 ## run the model
 
-model1 <- glmer(total_time_per_plot ~ method + (1|location), family = Gamma(link="log"), data=Time1)
+model1 <- glmer(total_time_per_plot ~ method * location + (1|location), family = Gamma(link="log"), data=Time1)
 
 ## check for overdispersion
 
@@ -64,7 +64,26 @@ plot(simulationOutput)
 # “DHARMa residual diagnostics indicated a good model fit (KS test p = 0.97, dispersion test p = 0.29, outlier test p = 1). No overdispersion, outliers, or significant deviations from model assumptions were detected. Warnings about quantile regressions reflect the small sample size, not issues with model fit.”
 
 summary(model1)
+
+anova(model1)
+
+library(car)
+
+Anova(model1, type = "III")  # Type III Wald chi-square test
+
+
+
 ```
+Analysis of Deviance Table (Type III Wald chisquare tests)
+
+Response: total_time_per_plot
+                    Chisq Df Pr(>Chisq)    
+(Intercept)     1061.4476  1  < 2.2e-16 ***
+method            14.7939  1  0.0001199 ***
+location           0.9222  4  0.9213507    
+method:location    1.6488  3  0.6483805    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
 
 Now we'll visualize this :)
 
@@ -92,7 +111,7 @@ ggplot(plot_data, aes(x = method, y = mean_time, fill = method)) +
   scale_fill_manual(values = seagrass_colours) +
   labs(
     x = "Transplantation Method",
-    y = "Mean Planting Time per Plot (minutes)",
+    y = "Mean Prep + Planting Time per Plot (minutes)",
     title = "Effect of Transplantation Method on Planting Time"
   ) +
   theme_minimal(base_size = 14) +
@@ -146,3 +165,18 @@ summary(model_exp)
 A generalized linear mixed model (Gamma, log link) was fitted to evaluate the effect of experience (experienced vs. inexperienced) on planting time for the unanchored method. There was no statistically significant effect of experience (estimate = –0.23 on log scale, SE = 0.18, p = 0.21). Mean estimated planting times were 46.5 minutes for inexperienced and 37.0 minutes for experienced planters, a non-significant reduction of about 9.5 minutes. Model diagnostics showed no issues with overdispersion or fit.
 
 However, the sample size was very small (n = 2 unexperienced, n = 9 experienced)
+
+visualize this!
+```{r}
+
+
+ggplot(unanchored_time1, aes(x = experience, y = total_time_per_plot)) +
+  geom_col(fill = "#4E79A7", width = 0.6) +
+  labs(
+    title = "Effect of Planter Experience on Transplantation Time",
+    x = "Experience",
+    y = "Predicted Time per Plot (minutes)"
+  ) +
+  theme_minimal()
+
+```
